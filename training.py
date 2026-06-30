@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 
+
 def ensure_src_root_on_path() -> Path:
     src_root = Path(__file__).resolve().parents[1]
     src_root_str = str(src_root)
@@ -15,16 +16,17 @@ def ensure_src_root_on_path() -> Path:
 
 ensure_src_root_on_path()
 
-from moss_tts_local.common import current_python_executable, run_subprocess
+from moss_tts_local.common import current_python_executable, repo_root, run_subprocess
 from moss_tts_local.params import load_training_params
 
 
-DEFAULT_MODEL_PATH = "OpenMOSS-Team/MOSS-TTS-Local-Transformer"
-DEFAULT_CODEC_PATH = "OpenMOSS-Team/MOSS-Audio-Tokenizer"
+# 官方仓库内的微调脚本（相对克隆仓库根目录）。
+PREPARE_SCRIPT = "moss_tts_local/finetuning/prepare_data.py"
+SFT_SCRIPT = "moss_tts_local/finetuning/sft.py"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run single-GPU MOSS-TTS Local finetuning.")
+    parser = argparse.ArgumentParser(description="Run single-GPU MOSS-TTS Local finetuning via official CLI.")
     parser.add_argument("--params-file", dest="params_file", type=str, required=True)
     return parser.parse_args(argv)
 
@@ -33,13 +35,16 @@ def build_prepare_command(args: argparse.Namespace, prepared_jsonl: Path) -> lis
     command = [
         current_python_executable(),
         "-m",
-        "moss_tts_local.finetuning.prepare_data",
+        "accelerate.commands.launch",
+        "--num_processes",
+        "1",
+        str(repo_root() / PREPARE_SCRIPT),
         "--model-path",
         args.init_model_path,
         "--codec-path",
         args.codec_path,
         "--device",
-        args.device,
+        "auto",
         "--input-jsonl",
         args.train_jsonl,
         "--output-jsonl",
@@ -61,8 +66,7 @@ def build_train_command(args: argparse.Namespace, prepared_jsonl: Path) -> list[
         "accelerate.commands.launch",
         "--num_processes",
         "1",
-        "-m",
-        "moss_tts_local.finetuning.sft",
+        str(repo_root() / SFT_SCRIPT),
         "--model-path",
         args.init_model_path,
         "--codec-path",
@@ -113,8 +117,19 @@ def train(argv: list[str] | None = None) -> None:
     prepared_dir.mkdir(parents=True, exist_ok=True)
     prepared_jsonl = prepared_dir / "train_with_codes.jsonl"
 
-    run_subprocess(build_prepare_command(args, prepared_jsonl), cwd=Path(__file__).resolve().parents[1])
-    run_subprocess(build_train_command(args, prepared_jsonl), cwd=Path(__file__).resolve().parents[1])
+    # accelerate 默认不启用 wandb；显式禁用以免环境中安装了 wandb 时被自动拉起。
+    subprocess_env = {"WANDB_MODE": "disabled"}
+
+    run_subprocess(
+        build_prepare_command(args, prepared_jsonl),
+        cwd=repo_root(),
+        env=subprocess_env,
+    )
+    run_subprocess(
+        build_train_command(args, prepared_jsonl),
+        cwd=repo_root(),
+        env=subprocess_env,
+    )
 
     metadata = {
         "modelPath": str(output_root),

@@ -22,6 +22,38 @@ def ensure_src_root_on_path() -> Path:
 ensure_src_root_on_path()
 
 
+# 适配器目录：src-model/moss_tts_local/
+_ADAPTER_DIR = Path(__file__).resolve().parent
+# src-model/
+_SRC_MODEL_ROOT = _ADAPTER_DIR.parent
+
+BASE_MODEL_NAME = "moss_tts_local"
+MODEL_ARTIFACTS_DIR = "base-models"
+
+# 权重本地目录名（download.py 下载到 repo_root()/models/<name>）。
+MOSS_MODEL_NAME = "MOSS-TTS-Local-Transformer"
+MOSS_AUDIO_TOKENIZER_NAME = "MOSS-Audio-Tokenizer"
+
+
+def repo_root() -> Path:
+    """上游 MOSS-TTS 克隆仓库根目录（``base-models/moss_tts_local``）。
+
+    官方仓库经 ``download.py`` 克隆到此；``moss_tts_local/finetuning/{prepare_data,sft}.py``
+    位于该克隆仓库内，由 ``training.py`` 以 ``cwd=repo_root()`` 调用。
+    """
+    return _SRC_MODEL_ROOT / MODEL_ARTIFACTS_DIR / BASE_MODEL_NAME
+
+
+def base_model_path() -> Path:
+    """基座权重目录（TTS / 声音克隆 / 微调初始化）。"""
+    return repo_root() / "models" / MOSS_MODEL_NAME
+
+
+def codec_path() -> Path:
+    """音频 codec 目录（微调 prepare_data 用）。"""
+    return repo_root() / "models" / MOSS_AUDIO_TOKENIZER_NAME
+
+
 def install_torchaudio_load_fallback() -> None:
     import soundfile as sf
     import torch
@@ -257,8 +289,22 @@ def save_generated_audio(output_path: str, audio, sample_rate: int) -> None:
     torchaudio.save(str(resolved_output), audio.detach().cpu(), int(sample_rate))
 
 
-def run_subprocess(command: Sequence[str], cwd: Path | None = None) -> None:
-    subprocess.run(list(command), cwd=str(cwd) if cwd else None, check=True)
+def run_subprocess(
+    command: Sequence[str],
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> None:
+    import os
+
+    merged_env = None
+    if env:
+        merged_env = {**os.environ, **env}
+    subprocess.run(
+        list(command),
+        cwd=str(cwd) if cwd else None,
+        env=merged_env,
+        check=True,
+    )
 
 
 def add_shared_generation_args(parser: argparse.ArgumentParser) -> None:

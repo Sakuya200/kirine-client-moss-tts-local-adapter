@@ -4,6 +4,7 @@ from argparse import Namespace
 from dataclasses import dataclass
 from pathlib import Path
 
+from moss_tts_local.common import base_model_path, codec_path
 from moss_tts_local.params_entity import CommonTaskArgs, ParamsEntity, RuntimeOptions
 
 
@@ -112,56 +113,32 @@ class MossVoiceCloneParams:
             attn_implementation=self.runtime.attn_implementation,
             max_new_tokens=8192,
         )
-def _resolve_locator_candidate(
-    common: CommonTaskArgs,
-    default_leaf_name: str,
-    *,
-    prefer_speaker_dir_name: bool,
-) -> str | None:
-    if common.model_root_path is None:
-        return None
-
-    root_path = Path(common.model_root_path).expanduser().resolve()
-    leaf_name = default_leaf_name
-    if prefer_speaker_dir_name and common.speaker_dir_name:
-        leaf_name = common.speaker_dir_name
-        if leaf_name.strip().casefold() == "base-models":
-            leaf_name = default_leaf_name
-    return str((root_path / leaf_name).resolve())
-
-
-def _require_resolved_path(path: str | None, label: str) -> str:
-    if path is None:
-        raise ValueError(f"MOSS params payload is missing a resolvable {label}")
-    return path
-
-
 def _resolve_moss_inference_root(common: CommonTaskArgs) -> Path:
-    if common.model_root_path is None:
-        raise ValueError("MOSS params payload is missing a resolvable inference model path")
+    """推理模型路径。
 
-    root_path = Path(common.model_root_path).expanduser().resolve()
+    - 微调说话人：``<model_root_path>/<speaker_dir_name>``（官方 ``sft.py`` 产出的
+      checkpoint 自包含，可直接 ``from_pretrained``）；若其下存在
+      ``MOSS-TTS-Local-Transformer`` 子目录则优先用该子目录。
+    - 基座模型：经 ``__file__`` 推导的 ``base_model_path()``，不依赖 ``model_root_path``。
+    """
     speaker_dir_name = common.speaker_dir_name
     if speaker_dir_name and speaker_dir_name.strip().casefold() == "base-models":
         speaker_dir_name = None
 
-    if speaker_dir_name:
+    if speaker_dir_name and common.model_root_path:
+        root_path = Path(common.model_root_path).expanduser().resolve()
         speaker_root = (root_path / speaker_dir_name).resolve()
         bundled_root = (speaker_root / MOSS_MODEL_NAME).resolve()
         if bundled_root.is_dir():
             return bundled_root
         return speaker_root
 
-    return (root_path / MOSS_MODEL_NAME).resolve()
+    return base_model_path()
 
 
 def _resolve_training_model_path(common: CommonTaskArgs) -> str:
-    candidate = _resolve_locator_candidate(
-        common,
-        MOSS_MODEL_NAME,
-        prefer_speaker_dir_name=False,
-    )
-    return _require_resolved_path(candidate, "training model path")
+    """微调初始化权重：始终从基座权重开始。"""
+    return str(base_model_path())
 
 
 def _resolve_inference_model_path(common: CommonTaskArgs) -> str:
@@ -169,16 +146,8 @@ def _resolve_inference_model_path(common: CommonTaskArgs) -> str:
 
 
 def _resolve_codec_path(common: CommonTaskArgs) -> str:
-    candidate = _resolve_locator_candidate(
-        CommonTaskArgs(
-            model_root_path=common.model_root_path,
-            speaker_dir_name=None,
-            model_params_json=common.model_params_json,
-        ),
-        MOSS_AUDIO_TOKENIZER_NAME,
-        prefer_speaker_dir_name=False,
-    )
-    return _require_resolved_path(candidate, "codec path")
+    """音频 codec 路径：经 ``__file__`` 推导，不依赖 ``model_root_path``。"""
+    return str(codec_path())
 
 
 def _parse_float_with_default(value: str | None, default: float) -> float:
